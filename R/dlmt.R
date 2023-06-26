@@ -1,13 +1,179 @@
 
 # main function for package; runs DLM with transformations
 
-# TODO: optional inputs
-#  - knot locations
-#  - optimization method (MAP, MCMC)
-# output: posterior somethings
+# idea: dlmt() should just run the model,
+#  with the option to optimize the transformation!
 
-# TODO: note that this assumes minimum t is 1! I think it's baked into the model...?
+# this will spit out optimized parameters (for basis built on full dataset)
+#  - so we should allow users to input parameters, based on past runs
 dlmt <- function(
+    df,
+    outcome = y,
+    time = t,
+    event = g,
+    unit = a,
+    centering = c("median", "mean", "none"),
+
+    optimize = T,
+    optimize_method = c("optim", "mcmc"),
+    lam = NULL,
+
+    w = 0.5,
+    v0 = 10,
+    a0 = 2,
+    b0 = sd(dplyr::pull(df, {{outcome}})),
+
+    smooth = F,
+    details = F,
+    ...) {
+
+  args <- list(...)
+  centering <- match.arg(centering)
+  optimize_method <- match.arg(optimize_method)
+
+  # automatically determine if model should be h2h or multiplayer
+  max_players <- df %>%
+    dplyr::group_by({{event}}) %>%
+    dplyr::summarize(num_units = length(unique({{unit}}))) %>%
+    dplyr::summarize(max_players = max(num_units)) %>%
+    dplyr::pull(max_players)
+  if (max_players == 2) {
+    cat("Using head-to-head model...")
+    model_class <- "h2h"
+    df <- to_h2h(df)
+  } else {
+    cat("Using multiplayer model...")
+    model_class <- "multi"
+  }
+
+  # preprocess dataset
+  dfp <- df %>%
+    preprocess_data(
+      outcome = {{outcome}},
+      time = {{time}},
+      event = {{event}},
+      unit = {{unit}},
+      event_center = centering,
+      model_class = model_class)
+
+  # build spline basis (if optimizing or given a transformation)
+  if (optimize | !is.null(lam)) {
+    # prepare monotone spline transformation
+    knots <- get_knots(
+      dfp,
+      outcome = {{outcome}},
+      num_knots = args$num_knots)
+    i_basis <- get_ispline_basis(
+      dplyr::pull(dfp, {{outcome}}),
+      knots = knots,
+      degree = 3)
+    m_basis <- get_mspline_basis(
+      dplyr::pull(dfp, {{outcome}}),
+      knots = knots,
+      degree = 3)
+  }
+
+  # if optimizing, get optimized transformation and w
+  if (optimize) {
+    stopifnot(!is.null(optimize_method))
+    opt <- optimize_dlmt(
+      df = dfp,
+      outcome = {{outcome}},
+      time = {{time}},
+      event = {{event}},
+      unit = {{unit}},
+
+      knots = knots,
+      i_basis = i_basis,
+      m_basis = m_basis,
+
+      training_periods = args$training_periods,
+      model_class = model_class,
+      method = optimize_method
+    )
+    lam <- c(opt$lam0, opt$theta_tilde[-1])
+    w   <- opt$theta_tilde[1]
+  }
+
+  # transform dataset
+  if (optimize | !is.null(lam)) {
+    dft <- dfp %>%
+      dplyr::mutate({{outcome}} := as.vector(i_basis %*% lam[-1:0] + lam[1]))
+  } else {
+    dft <- dfp
+  }
+
+  # run dlm with transformations
+  res <- run_dlmt(
+    dft,
+    outcome = {{outcome}},
+    time = {{time}},
+    event = {{event}},
+    unit = {{unit}},
+    model_params = c(w, v0, a0, b0))
+
+  if (smooth) {
+    res <- smooth_results(res, w)
+  }
+
+  if (details) {
+    # visualize transformation
+    transformation_plot <- dplyr::tibble(
+      x    = dfp$y,
+      yfit = as.vector(lam[1] + i_basis %*% lam[-1])
+    ) %>%
+      ggplot2::ggplot(ggplot2::aes(x=x, y=yfit)) +
+      ggplot2::geom_line(size=1) +
+      ggplot2::geom_abline(lty = "dotted") +
+      ggplot2::labs(y = "Transformed outcome",
+                    x = "Outcome") +
+      ggplot2::theme_classic()
+
+    # store predictions for each game
+    preds <- get_predictions(df = dft,
+                             res = res,
+                             outcome = {{outcome}},
+                             time = {{time}},
+                             event = {{event}},
+                             unit = {{unit}},
+                             model_class = model_class) %>%
+      dplyr::rowwise() %>%
+      dplyr::mutate(
+        sd = list(sqrt(diag(sigma))),
+        sd_theta = list(sqrt(diag(var_theta)))) %>%
+      dplyr::select(c(t, eventID, ath, y_trans, pt_est, sd, sd_theta)) %>%
+      tidyr::unnest(dplyr::everything())
+
+    # store posterior parameter estimates
+    m_df <- attr(dft, "unit_key") %>%
+      cbind(purrr::reduce(res$m, cbind)) %>%
+      dplyr::as_tibble(.name_repair = "minimal")
+    names(m_df) <- c("unit", "unit_id", paste0("t", 1:max(df$t)))
+
+    V_df <- attr(dft, "unit_key") %>%
+      cbind(purrr::map(res$V, diag) %>%
+              purrr::reduce(cbind)) %>%
+      dplyr::as_tibble(.name_repair = "minimal")
+    names(V_df) <- c("unit", "unit_id", paste0("t", 1:max(df$t)))
+
+    sig_df <- tail(res, n=1) %>%
+      dplyr::select(a, b) %>%
+      dplyr::mutate(mean = b/(a-1),
+                    mode = b/(a+1))
+
+    attr(res, "transformation_plot") <- transformation_plot
+    attr(res, "predictions") <- preds
+    attr(res, "m_values") <- m_df
+    attr(res, "V_values") <- V_df
+    attr(res, "sig_values") <- sig_df
+  }
+
+  res
+}
+
+if (F) {
+  df <- sim_data(ath_per_game = 5, num_games = 10, tmax = 6)
+  res <- dlmt(
     df,
 
     outcome = y,
@@ -15,135 +181,23 @@ dlmt <- function(
     event = g,
     unit = a,
 
-    centering = c("none", "median", "mean"),
-    training_periods = NULL,
-    model_class = NULL,
-    method = c("optim", "mcmc")) {
+    centering = c("median"),
 
-  centering <- match.arg(centering)
-  method <- match.arg(method)
-  p <- length(unique(dplyr::pull(df, {{unit}})))
+    model_params = NULL,
+    optimize = T,
+    optimize_method = c("optim"),
 
-  # browser()
-
-  # set number of training periods
-  if (is.null(training_periods)) {
-    tmax <- max(dplyr::pull(df, {{time}}))
-    training_periods <- tmax - round(tmax / 3)
-  }
-  stopifnot(training_periods < tmax)
-
-  # automatically determine if model should be h2h or multiplayer
-  if (is.null(model_class)) {
-    max_players <- df %>%
-      dplyr::group_by({{event}}) %>%
-      dplyr::summarize(num_units = length(unique({{unit}}))) %>%
-      dplyr::summarize(max_players = max(num_units)) %>%
-      dplyr::pull(max_players)
-
-    if (max_players == 2) {
-      model_class <- "h2h"
-      df <- to_h2h(df)
-    } else {
-      model_class <- "multi"
-    }
-  }
-
-  # preprocess dataset
-  df <- df %>%
-    preprocess_data(event_center = centering,
-                    model_class = model_class)
-
-  # make training dataset
-  df_train <- df %>%
-    dplyr::filter({{time}} <= training_periods)
-  tmax_train <- max(dplyr::pull(df_train, {{time}}))
-
-  # prepare monotone spline transformation
-  training_knots <- get_knots(df_train, outcome = {{outcome}}, num_knots = 3)
-  i_basis <- get_ispline_basis(
-    dplyr::pull(df_train, {{outcome}}),
-    knots = training_knots,
-    degree = 3)
-  m_basis <- get_mspline_basis(
-    dplyr::pull(df_train, {{outcome}}),
-    knots = training_knots,
-    degree = 3)
-  init_t_params <- get_ispline_coefs(
-    dplyr::pull(df_train, {{outcome}}),
-    basis = i_basis,
-    nonneg = T)
-
-  ### prepare objects for stan
-
-  # build X matrices for model
-  X <- build_X(df_train,
-               time={{time}}, event={{event}}, unit={{unit}},
-               tmax = tmax_train, p = p,
-               model_class = model_class)
-  # record which units participate in each time period
-  participants <- build_participants(df_train,
-                                     time={{time}}, unit={{unit}},
-                                     tmax = tmax_train,
-                                     model_class = model_class)
-  # record number of (unique) units in each time period
-  nT <- build_nT(df_train, time={{time}})
-  nT_unique <- build_nT_unique(df_train,
-                               time={{time}}, unit={{unit}},
-                               tmax = tmax_train,
-                               model_class = model_class)
-  stan_dat <- list(
-    p = p,
-    tmax = tmax_train,
-
-    nT = nT,
-    nT_unique = nT_unique,
-    sumnT = sum(nT),
-    sumnT_unique = sum(nT_unique),
-
-    B = ncol(i_basis),
-    sumB = sum(init_t_params[-1]),
-    init_lam = init_t_params,
-    i_basis = i_basis,
-    m_basis = m_basis,
-    alpha = sd(dplyr::pull(df_train, {{outcome}})),
-
-    y = dplyr::pull(df_train, {{outcome}}),
-    Xbar = X,
-    ptcps = participants
-  )
-
-  ### run stan model!
-
-  if (method == "optim") {
-    res <- rstan::optimizing(
-      stanmodels$model_unc,
-      data = stan_dat,
-      hessian = F,
-      # hessian = T,
-      # draws = 1000,
-      # importance_resampling=T,   # get approximate posterior draws?
-      # init = list(lam_scale = sum(init_t_params[-1])),   # initialize lam_scale at the right spot so things don't break
-      verbose = T
-    )
-  } else {
-    res <- rstan::sampling(
-      stanmodels$model_unc,
-      data = stan_dat,
-      cores = 4,              # number of cores (could use one per chain)
-      refresh = 1             # no progress shown
-    )
-  }
+    smooth = T,
+    details = T)
 
   res
-}
-
-if (F) {
-  df <- sim_data(ath_per_game = 5)
-  res <- dlmt(df, method="optim")
+  names(attributes(res))
+  attr(res, "transformation_plot")
+  attr(res, "sig_values")
+  attr(res, "predictions")
 
   dfh2h <- sim_data(ath_per_game = 2)
-  resh2h <- dlmt(dfh2h, method="optim")
+  resh2h <- optimize_dlmt(dfh2h, method="optim")
 }
 
 

@@ -84,6 +84,9 @@ get_ispline_coefs <- function(y,
 # get all knots (boundary and interior quantile) for a given df
 get_knots <- function(df, outcome=y, num_knots = 3) {
   outcome <- dplyr::pull(df, {{outcome}})
+  if (is.null(num_knots)) {
+    num_knots <- 3
+  }
 
   # evenly space num_knots quantiles
   quants <- seq(0, 1, length.out = num_knots + 2)
