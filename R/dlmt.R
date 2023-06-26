@@ -142,8 +142,8 @@ if (F) {
   df <- sim_data(ath_per_game = 5)
   res <- dlmt(df, method="optim")
 
-  df <- sim_data(ath_per_game = 2)
-  res <- dlmt(df, method="optim")
+  dfh2h <- sim_data(ath_per_game = 2)
+  resh2h <- dlmt(dfh2h, method="optim")
 }
 
 

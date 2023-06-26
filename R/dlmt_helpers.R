@@ -98,7 +98,8 @@ build_participants <- function(df, time=t, unit=a,
       df %>%
         dplyr::filter({{time}} == x) %>%
         dplyr::select(cols) %>%
-        unlist(use.names=F)
+        unlist(use.names=F) %>%
+        unique()
     }) %>%
     unlist()
 }
