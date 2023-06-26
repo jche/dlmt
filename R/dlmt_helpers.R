@@ -160,7 +160,7 @@ run_dlmt <- function(
 
   # Store results as a tibble
   res <- dplyr::tibble(
-    t = mint:maxt,
+    {{time}} := mint:maxt,
     a = as,
     b = bs,
     m = ms,
@@ -179,8 +179,8 @@ run_dlmt <- function(
 
 # input: results
 # output: smoothed results
-smooth_results <- function(res, w) {
-  max_t <- max(res$t)
+smooth_results <- function(res, time=t, w) {
+  max_t <- max(dplyr::pull(res, {{time}}))
 
   # initialize storage lists
   m_smooth_list <- list()
@@ -190,9 +190,9 @@ smooth_results <- function(res, w) {
   m_smooth_list[[max_t]] <- as.numeric(res$m[[max_t]])
   V_smooth_list[[max_t]] <- res$V[[max_t]]
 
-  for (tp in (max(res$t)-1):1) {
+  for (tp in (max_t-1):1) {
     # browser()
-    res_t <- res %>% dplyr::filter(t == tp)
+    res_t <- res %>% dplyr::filter({{time}} == tp)
 
     # only add w if player has started playing by given tp
     w_vec <- rep(w, length(res$m[[1]]))
@@ -240,28 +240,28 @@ get_predictions <- function(df,
     true_values <- df %>%
       dplyr::group_by({{time}}) %>%
       dplyr::summarize(
-        eventID = list({{event}}),
-        ath = list({{unit}}),
-        y_trans = list({{outcome}}),
+        {{event}} := list({{event}}),
+        {{unit}} := list({{unit}}),
+        {{outcome}} := list({{outcome}}),
         .groups="drop") %>%
       dplyr::mutate(X = res$X,
                     ptcps = res$ptcps)
   } else if (model_class == "h2h") {
-    true_values <- df %>%
-      group_by(t) %>%
-      summarize(eventID = list(eventID),
-                ath1 = list(ath1),
-                ath2 = list(ath2),
-                y_trans = list(y_trans), .groups="drop") %>%
-      mutate(X = res$X %>%
-               discard(is.null),    # account for empty time periods
-             ptcps = res$ptcps %>%
-               discard(is.null))
+    # true_values <- df %>%
+    #   group_by(t) %>%
+    #   summarize(eventID = list(eventID),
+    #             ath1 = list(ath1),
+    #             ath2 = list(ath2),
+    #             y_trans = list(y_trans), .groups="drop") %>%
+    #   mutate(X = res$X %>%
+    #            discard(is.null),    # account for empty time periods
+    #          ptcps = res$ptcps %>%
+    #            discard(is.null))
   }
 
   # make "predictive" values for time 1
   output1 <- dplyr::tibble(
-    t = 1,
+    {{time}} := 1,
     a = attr(res, "model_params")[3],
     b = attr(res, "model_params")[4],
     m = list(rep(0, p)),
@@ -271,7 +271,7 @@ get_predictions <- function(df,
   # link each time t+1 with predicted values from time t
   model_outputs <- res %>%
     dplyr::select(-X, -ptcps) %>%
-    dplyr::mutate(t = t+1) %>%
+    dplyr::mutate({{time}} := {{time}}+1) %>%
     dplyr::bind_rows(output1)
 
   # if only one athlete, make sure that X is a matrix
@@ -283,7 +283,8 @@ get_predictions <- function(df,
 
   # compute mean and variance estimates for each time period: SUPER slow
   true_values %>%
-    dplyr::left_join(model_outputs, by="t") %>%
+    dplyr::left_join(model_outputs,
+                     by=rlang::as_string(rlang::ensym(time))) %>%
     dplyr::rowwise() %>%
     dplyr::mutate(
       pt_est = list(as.vector(X %*% m[ptcps])),

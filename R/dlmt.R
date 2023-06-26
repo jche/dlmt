@@ -113,13 +113,13 @@ dlmt <- function(
     model_params = c(w, v0, a0, b0))
 
   if (smooth) {
-    res <- smooth_results(res, w)
+    res <- smooth_results(res, time={{time}}, w)
   }
 
   if (details) {
     # visualize transformation
     transformation_plot <- dplyr::tibble(
-      x    = dfp$y,
+      x    = dplyr::pull(dfp, {{outcome}}),
       yfit = as.vector(lam[1] + i_basis %*% lam[-1])
     ) %>%
       ggplot2::ggplot(ggplot2::aes(x=x, y=yfit)) +
@@ -141,20 +141,21 @@ dlmt <- function(
       dplyr::mutate(
         sd = list(sqrt(diag(sigma))),
         sd_theta = list(sqrt(diag(var_theta)))) %>%
-      dplyr::select(c(t, eventID, ath, y_trans, pt_est, sd, sd_theta)) %>%
+      dplyr::select(-c(X, ptcps, a, b, m, V, sigma, var_theta)) %>%
       tidyr::unnest(dplyr::everything())
 
     # store posterior parameter estimates
+    maxt <- max(dplyr::pull(df, {{time}}))
     m_df <- attr(dft, "unit_key") %>%
       cbind(purrr::reduce(res$m, cbind)) %>%
       dplyr::as_tibble(.name_repair = "minimal")
-    names(m_df) <- c("unit", "unit_id", paste0("t", 1:max(df$t)))
+    names(m_df) <- c("unit", "unit_id", paste0("t", 1:maxt))
 
     V_df <- attr(dft, "unit_key") %>%
       cbind(purrr::map(res$V, diag) %>%
               purrr::reduce(cbind)) %>%
       dplyr::as_tibble(.name_repair = "minimal")
-    names(V_df) <- c("unit", "unit_id", paste0("t", 1:max(df$t)))
+    names(V_df) <- c("unit", "unit_id", paste0("t", 1:maxt))
 
     sig_df <- tail(res, n=1) %>%
       dplyr::select(a, b) %>%
@@ -198,6 +199,33 @@ if (F) {
 
   dfh2h <- sim_data(ath_per_game = 2)
   resh2h <- optimize_dlmt(dfh2h, method="optim")
+}
+
+if (F) {
+  df <- sim_data(ath_per_game = 5, num_games = 10, tmax = 6) %>%
+    dplyr::rename(ti = t, ga = g, at = a, ou = y)
+  res <- dlmt(
+    df,
+
+    outcome = ou,
+    time = ti,
+    event = ga,
+    unit = at,
+
+    centering = c("median"),
+
+    model_params = NULL,
+    optimize = T,
+    optimize_method = c("optim"),
+
+    smooth = T,
+    details = T)
+
+  res
+  names(attributes(res))
+  attr(res, "transformation_plot")
+  attr(res, "sig_values")
+  attr(res, "predictions")
 }
 
 
