@@ -52,8 +52,9 @@ preprocess_data <- function(df,
   }
 
   # event-center dataset
-  if (model_class == "h2h" & event_center != "none") {
-    warning("For two-player events, event centering should be \"none\"")
+  if (model_class == "h2h") {
+    stopifnot("For two-player events, event centering should be \"none\"" =
+                event_center == "none")
   }
   center_fun <- function(x, type) {
     switch(type,

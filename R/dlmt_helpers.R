@@ -34,7 +34,11 @@ run_dlmt <- function(
     event = g,
     unit = a,
     model_params,
+    model_class = c("multi", "h2h"),
+    clear_diags=F,
     cap_var=T) {
+
+  model_class <- match.arg(model_class)
   unit_str <- rlang::as_string(rlang::ensym(unit))
 
   # some useful constants
@@ -66,31 +70,42 @@ run_dlmt <- function(
     ### filter df and event-size key down to time t
     df_time <- df %>%
       dplyr::filter({{time}} == tp)
-    event_size_key_time <- attr(df, "event_size_key") %>%
-      dplyr::filter({{time}} == tp)
+
+    if (model_class == "multi") {
+      event_size_key_time <- attr(df, "event_size_key") %>%
+        dplyr::filter({{time}} == tp)
+    }
 
     ### compute useful quantities
 
     # total number of competitors in time t
     n_t <- nrow(df_time)
 
+    if (n_t == 0) {
+      browser()
+      stop("Haven't implemented empty time periods yet...")
+    }
+
     # X matrix: n_t by p matrix indicating which athlete the scores belong to
-    X <- build_Xt(df_time, event={{event}}, unit=paste0(unit_str, "_id"), p=p)
+    X <- build_Xt(df_time, event={{event}}, unit=unit_str, p=p, model_class=model_class)
+    if (model_class == "multi") {
+      # centered X matrix: (I - GDG^T)X in our notation
+      H <- build_Ht(event_size_key_time, n_t)
+      X <- H %*% X
+    }
+    Xs[[tp]] <- X
 
     # p by 1 vector indicating which athletes competed at all in time period
     ptcps[[tp]] <- Matrix::colSums(X != 0) != 0
 
-    # # centered X matrix: (I - GDG^T)X in our notation
-    H <- build_Ht(event_size_key_time, n_t)
-    Xbar <- H %*% X
-    Xs[[tp]] <- Xbar
-
     # X^T X: pxp matrix
-    XtX <- Matrix::t(X) %*% Xbar   # much faster than t(Xbar) %*% Xbar
+    # note: t(X) %*% Xbar is faster than t(Xbar) %*% Xbar,
+    #  but code is neater this way
+    XtX <- Matrix::t(X) %*% X
 
     # Xbarty: px1 vector with entries equal to the sum of scores for each athlete
     #  minus the average score for the game
-    Xbarty <- as.vector(Matrix::t(Xbar) %*% dplyr::pull(df_time, {{outcome}}))
+    Xbarty <- as.vector(Matrix::t(X) %*% dplyr::pull(df_time, {{outcome}}))
 
     # yty is the (scalar) sum of squared scores
     yty <- df_time %>%
@@ -110,9 +125,13 @@ run_dlmt <- function(
       #  - hacky: uses m == 0 to indicate that athlete has never played
       innov <- Matrix::Diagonal(p, x=w*as.vector(!ms[[tp]] == 0))
 
-      # Add innovation
-      #  - note: we don't add any innovation to off-diagonals
-      V_pr <- Vs[[tp]] + innov
+      # Add innovation variance
+      if (clear_diags) {
+        V_pr <- Matrix::Diagonal(x=diag(Vs[[tp]])) + innov
+      } else {
+        # note: we don't add any innovation covariance to off-diagonals
+        V_pr <- Vs[[tp]] + innov
+      }
       if (cap_var) {
         # cap variance at initial variance v0
         V_pr[V_pr > v0] <- v0
@@ -191,7 +210,6 @@ smooth_results <- function(res, time=t, w) {
   V_smooth_list[[max_t]] <- res$V[[max_t]]
 
   for (tp in (max_t-1):1) {
-    # browser()
     res_t <- res %>% dplyr::filter({{time}} == tp)
 
     # only add w if player has started playing by given tp
@@ -228,13 +246,16 @@ get_predictions <- function(df,
                             time = t,
                             event = g,
                             unit = a,
-                            model_class = "multi") {
+                            model_class = c("multi", "h2h")) {
+  model_class <- match.arg(model_class)
 
   # useful values
   w <- attr(res, "model_params")[1]
   v0 <- attr(res, "model_params")[2]
   p <- attr(df, "p")
 
+  # TODO: these are actually 'ath' values in the original code...
+  #  - here we're using the "athleteID"s, which might lead to problems?
   if (model_class == "multi") {
     # gather observed outcomes in appropriate format (one row per time period)
     true_values <- df %>%
@@ -247,16 +268,19 @@ get_predictions <- function(df,
       dplyr::mutate(X = res$X,
                     ptcps = res$ptcps)
   } else if (model_class == "h2h") {
-    # true_values <- df %>%
-    #   group_by(t) %>%
-    #   summarize(eventID = list(eventID),
-    #             ath1 = list(ath1),
-    #             ath2 = list(ath2),
-    #             y_trans = list(y_trans), .groups="drop") %>%
-    #   mutate(X = res$X %>%
-    #            discard(is.null),    # account for empty time periods
-    #          ptcps = res$ptcps %>%
-    #            discard(is.null))
+    unit_str <- rlang::as_string(rlang::ensym(unit))
+    true_values <- df %>%
+      dplyr::group_by({{time}}) %>%
+      dplyr::summarize(
+        {{event}} := list({{event}}),
+        "{{unit}}1" := list(.data[[paste0(unit_str, 1)]]),
+        "{{unit}}2" := list(.data[[paste0(unit_str, 2)]]),
+        {{outcome}} := list({{outcome}}),
+        .groups="drop") %>%
+      dplyr::mutate(X = res$X %>%
+                      purrr::discard(is.null),    # account for empty time periods
+                    ptcps = res$ptcps %>%
+                      purrr::discard(is.null))
   }
 
   # make "predictive" values for time 1
@@ -321,9 +345,8 @@ optimize_dlmt <- function(
     model_class,
     training_periods = NULL,
     method = c("optim", "mcmc")) {
-
   method <- match.arg(method)
-  p <- length(unique(dplyr::pull(df, {{unit}})))
+  p <- attr(df, "p")
 
   # get number of training periods
   if (is.null(training_periods)) {
@@ -338,7 +361,6 @@ optimize_dlmt <- function(
   tmax_train <- max(dplyr::pull(df_train, {{time}}))
   i_basis_train <- i_basis[training_indices,]
   m_basis_train <- m_basis[training_indices,]
-
 
   ### prepare objects for stan
 
@@ -396,9 +418,11 @@ optimize_dlmt <- function(
       # draws = 1000,
       # importance_resampling=T,   # get approximate posterior draws?
       # init = list(lam_scale = sum(init_t_params[-1])),   # initialize lam_scale at the right spot so things don't break
-      verbose = T
+      verbose = F
     )
   } else {
+    browser()
+    stop("Haven't implemented MCMC sampling version yet")
     res <- rstan::sampling(
       stanmodels$model_unc,
       data = stan_dat,
@@ -444,29 +468,23 @@ build_X <- function(df, time=t, event=g, unit=a,
       df_time <- df %>%
         dplyr::filter({{time}} == x)
       n_t <- nrow(df_time)
+      if (n_t == 0) { return(tibble()) }
+
+      X <- build_Xt(df_time,
+                    event = {{event}},
+                    unit = unit_str,
+                    p = p,
+                    model_class = model_class)
 
       if (model_class == "multi") {
         event_size_key_time <- df_time %>%
           dplyr::group_by({{event}}) %>%
           dplyr::summarize(event_size = dplyr::n())
-        X <- build_Xt(df_time,
-                      event={{event}},
-                      unit=paste0(unit_str, "_id"),
-                      p)
         H <- build_Ht(event_size_key_time, n_t)
         X <- H %*% X
-      } else {
-        if (n_t == 0) { return(tibble()) }
-        X <- matrix(0, nrow=n_t, ncol=p)
-        for (i in 1:n_t) {
-          X[i, dplyr::pull(df_time, paste0(unit_str, "1_id"))[i]] <- 1
-          X[i, dplyr::pull(df_time, paste0(unit_str, "2_id"))[i]] <- -1
-          # X[i, (df_time$ath2)[i]] <- -1
-        }
       }
 
-      X %>%
-        as.matrix()
+      as.matrix(X)
     }) %>%
     do.call(rbind, .)
 }
@@ -477,15 +495,32 @@ build_X <- function(df, time=t, event=g, unit=a,
 #' @param p total number of athletes
 #'
 #' @return X_t matrix
-build_Xt <- function(df, event=g, unit=a, p) {
-  X_key <- df %>%
-    dplyr::select({{event}}, {{unit}}) %>%
-    dplyr::arrange({{event}}) %>%
-    dplyr::mutate(rowID = dplyr::row_number())
-  Matrix::sparseMatrix(
-    i = X_key$rowID,
-    j = dplyr::pull(X_key, {{unit}}),
-    dims = c(nrow(df), p))
+build_Xt <- function(
+    df,
+    event=g,
+    unit="a",
+    p,
+    model_class = c("multi", "h2h")) {
+  model_class <- match.arg(model_class)
+
+  if (model_class == "multi") {
+    X_key <- df %>%
+      dplyr::select({{event}}, paste0(unit, "_id")) %>%
+      dplyr::arrange({{event}}) %>%
+      dplyr::mutate(rowID = dplyr::row_number())
+    Matrix::sparseMatrix(
+      i = X_key$rowID,
+      j = dplyr::pull(X_key, paste0(unit, "_id")),
+      dims = c(nrow(df), p))
+  } else {
+    X <- matrix(0, nrow=nrow(df), ncol=p)
+    for (i in 1:nrow(df)) {
+      X[i, dplyr::pull(df, paste0(unit, "1_id"))[i]] <- 1
+      X[i, dplyr::pull(df, paste0(unit, "2_id"))[i]] <- -1
+    }
+    X
+  }
+
 }
 
 # column numbers of athletes who participate in each time period
@@ -508,7 +543,7 @@ build_participants <- function(df, time=t, unit=a,
     purrr::map(function(x) {
       df %>%
         dplyr::filter({{time}} == x) %>%
-        dplyr::select(cols) %>%
+        dplyr::select(all_of(cols)) %>%
         unlist(use.names=F) %>%
         unique()
     }) %>%
@@ -541,7 +576,7 @@ build_nT_unique <- function(df, time=t, unit=a,
     purrr::map_dbl(function(x) {
       df %>%
         dplyr::filter({{time}} == x) %>%
-        dplyr::select(cols) %>%
+        dplyr::select(all_of(cols)) %>%
         unlist(use.names=F) %>%
         unique() %>%
         length()

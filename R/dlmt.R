@@ -40,7 +40,11 @@ dlmt <- function(
   if (max_players == 2) {
     cat("Using head-to-head model...")
     model_class <- "h2h"
-    df <- to_h2h(df)
+    df <- to_h2h(df,
+                 outcome = {{outcome}},
+                 time = {{time}},
+                 event = {{event}},
+                 unit = {{unit}})
   } else {
     cat("Using multiplayer model...")
     model_class <- "multi"
@@ -110,7 +114,8 @@ dlmt <- function(
     time = {{time}},
     event = {{event}},
     unit = {{unit}},
-    model_params = c(w, v0, a0, b0))
+    model_params = c(w, v0, a0, b0),
+    model_class = model_class)
 
   if (smooth) {
     res <- smooth_results(res, time={{time}}, w)
@@ -123,7 +128,7 @@ dlmt <- function(
       yfit = as.vector(lam[1] + i_basis %*% lam[-1])
     ) %>%
       ggplot2::ggplot(ggplot2::aes(x=x, y=yfit)) +
-      ggplot2::geom_line(size=1) +
+      ggplot2::geom_line(linewidth=1) +
       ggplot2::geom_abline(lty = "dotted") +
       ggplot2::labs(y = "Transformed outcome",
                     x = "Outcome") +
@@ -196,9 +201,6 @@ if (F) {
   attr(res, "transformation_plot")
   attr(res, "sig_values")
   attr(res, "predictions")
-
-  dfh2h <- sim_data(ath_per_game = 2)
-  resh2h <- optimize_dlmt(dfh2h, method="optim")
 }
 
 if (F) {
@@ -228,5 +230,31 @@ if (F) {
   attr(res, "predictions")
 }
 
+if (F) {
+  df <- sim_data(ath_per_game = 2) %>%
+    dplyr::rename(ti = t, ga = g, at = a, ou = y)
+  res <- dlmt(
+    df,
+
+    outcome = ou,
+    time = ti,
+    event = ga,
+    unit = at,
+
+    centering = "none",
+
+    model_params = NULL,
+    optimize = T,
+    optimize_method = c("optim"),
+
+    smooth = T,
+    details = T)
+
+  res
+  names(attributes(res))
+  attr(res, "transformation_plot")
+  attr(res, "sig_values")
+  attr(res, "predictions")
+}
 
 
