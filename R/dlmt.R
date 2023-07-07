@@ -15,7 +15,32 @@
 #' @param details include visualization of transformation, model predictions, and model estimates in output?
 #' @param ... optional parameters, e.g., number of knots, number of training periods
 #'
-#' @return df with posterior model estimates at each time period, optionally with helpful attributes
+#' @return df with posterior model estimates at each time period:
+#' * `time`: (user-defined name) time period of posterior estimates
+#' * `a_posts`: shape parameter of posterior inverse-gamma distribution of observation variance
+#' * `b_posts`: scale parameter of posterior inverse-gamma distribution of observation variance
+#' * `m_posts`: mean of posterior normal distribution of athlete latent abilities,
+#' for athletes who participate in any games in the time period
+#' * `V_posts`: covariance matrix of posterior normal distribution of athlete latent abilities,
+#' for athletes who participate in any games in the time period
+#' * `X_mats`: X matrix used for computations for given time period
+#' * `ptcps`: vector of shortened athlete IDs indicating athletes who participate in the given time period
+#'
+#' Attributes of output df:
+#' * `model_params`: vector (w, V0, a0, b0) of parameters used to fit the model
+#' * `lambda`: vector of transformation parameters used for monotone spline transformation
+#'
+#' Optional attributes (details == T):
+#' * `transformation_plot`: ggplot visualizing transformation
+#' * `predictions`: data frame of observed and predicted values for each unit-event outcome.
+#'    * pt_est: point estimate of outcome
+#'    * sd: standard deviation of point estimate
+#'    * sd_theta: standard deviation of latent ability estimate (ignoring observation variance)
+#' * `m_values`: posterior means of latent ability estimates for each unit
+#' * `V_values`: posterior variance matrices of unit latent abilities relative to observation variance
+#' * `sig_values`: shape/scale of posterior distribution of observation variance at final time point,
+#' along with its mean and mode.
+#'
 #' @export
 dlmt <- function(
     df,

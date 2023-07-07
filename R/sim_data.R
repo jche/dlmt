@@ -13,7 +13,7 @@
 #' @param tmax number of time periods
 #' @param HX generate scores around centered thetas?
 #'
-#' @return a synthetic dataset
+#' @return A synthetic dataset with outcomes y, time periods t, games (events) g, and athletes (units) a
 #'
 #' @export
 #'

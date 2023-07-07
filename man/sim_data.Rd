@@ -38,7 +38,7 @@ sim_data(
 \item{HX}{generate scores around centered thetas?}
 }
 \value{
-a synthetic dataset
+A synthetic dataset with outcomes y, time periods t, games (events) g, and athletes (units) a
 }
 \description{
 Given true parameters, generate synthetic data according to DLM model

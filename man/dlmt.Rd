@@ -48,7 +48,39 @@ dlmt(
 \item{...}{optional parameters, e.g., number of knots, number of training periods}
 }
 \value{
-df with posterior model estimates at each time period, optionally with helpful attributes
+df with posterior model estimates at each time period:
+\itemize{
+\item \code{time}: (user-defined name) time period of posterior estimates
+\item \code{a_posts}: shape parameter of posterior inverse-gamma distribution of observation variance
+\item \code{b_posts}: scale parameter of posterior inverse-gamma distribution of observation variance
+\item \code{m_posts}: mean of posterior normal distribution of athlete latent abilities,
+for athletes who participate in any games in the time period
+\item \code{V_posts}: covariance matrix of posterior normal distribution of athlete latent abilities,
+for athletes who participate in any games in the time period
+\item \code{X_mats}: X matrix used for computations for given time period
+\item \code{ptcps}: vector of shortened athlete IDs indicating athletes who participate in the given time period
+}
+
+Attributes of output df:
+\itemize{
+\item \code{model_params}: vector (w, V0, a0, b0) of parameters used to fit the model
+\item \code{lambda}: vector of transformation parameters used for monotone spline transformation
+}
+
+Optional attributes (details == T):
+\itemize{
+\item \code{transformation_plot}: ggplot visualizing transformation
+\item \code{predictions}: data frame of observed and predicted values for each unit-event outcome.
+\itemize{
+\item pt_est: point estimate of outcome
+\item sd: standard deviation of point estimate
+\item sd_theta: standard deviation of latent ability estimate (ignoring observation variance)
+}
+\item \code{m_values}: posterior means of latent ability estimates for each unit
+\item \code{V_values}: posterior variance matrices of unit latent abilities relative to observation variance
+\item \code{sig_values}: shape/scale of posterior distribution of observation variance at final time point,
+along with its mean and mode.
+}
 }
 \description{
 Run dynamic linear model with transformations (Che and Glickman, 2023+)
