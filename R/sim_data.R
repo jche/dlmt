@@ -11,19 +11,22 @@
 #' @param ath_per_game number of athletes that play each game
 #' @param num_games number of games per time period
 #' @param tmax number of time periods
+#' @param HX generate scores around centered thetas?
 #'
 #' @return a synthetic dataset
+#'
+#' @export
 #'
 sim_data <- function(
     W = 0.5,
     V0 = 10,
     sd = 5,
     inv_trans_fun = function(x) {x},
-    num_athletes = 50,
-    ath_per_game = 10,
-    num_games = 25,
-    tmax = 10,
-    HX = T) {   # generate scores around centered thetas?
+    num_athletes = 10,
+    ath_per_game = 5,
+    num_games = 10,
+    tmax = 6,
+    HX = T) {
 
   if (ath_per_game > num_athletes) {
     stop("Number of athletes per game (ath_per_game) must be less than the total number of athletes in the dataset (num_athletes)")
@@ -122,8 +125,6 @@ sim_data <- function(
 
 # Plot how simulated data look
 if (FALSE) {
-
-  source("data_generating_process.R")
 
   W <- 0.5
   V0 <- 10
