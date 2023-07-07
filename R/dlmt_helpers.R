@@ -15,6 +15,19 @@
 #     dplyr::mutate({{outcome}} := mono_spline(lambda, i_basis))
 # }
 
+check_names <- function(name) {
+  name_str <- rlang::as_string(rlang::ensym(name))
+  # BAD_NAMES <- c("a", "b", "m", "V", "X", "ptcps")
+  BAD_NAMES <- c("a_posts", "b_posts", "m_posts", "V_posts",
+                 "X_mats", "ptcps",
+                 "pt_est", "sigma", "var_theta",
+                 "sd", "sd_theta")
+  if (name_str %in% BAD_NAMES) {
+    stop(paste("Error in column names: please rename", name_str,
+               "column to a different name."))
+  }
+}
+
 
 
 # run dlm with transformations --------------------------------------------
@@ -22,8 +35,14 @@
 #' Run no-intercept DLM
 #'
 #' @param df data to run model on
+#' @param outcome (unquoted) outcome variable
+#' @param time (unquoted) time variable
+#' @param event (unquoted) event variable
+#' @param unit (unquoted) unit variable
 #' @param model_params model hyperparameters w, v0, a0, b0
-#' @param cap_var cap maximum variance for players?
+#' @param model_class class of model, either multiplayer ("multi") or head-to-head ("h2h")
+#' @param clear_diags clear diagonals of V matrix between time periods?
+#' @param cap_var cap maximum variance for players at initial variance?
 #'
 #' @return many lists of model results
 #'
@@ -180,11 +199,11 @@ run_dlmt <- function(
   # Store results as a tibble
   res <- dplyr::tibble(
     {{time}} := mint:maxt,
-    a = as,
-    b = bs,
-    m = ms,
-    V = Vs,
-    X = Xs,
+    a_posts = as,
+    b_posts = bs,
+    m_posts = ms,
+    V_posts = Vs,
+    X_mats = Xs,
     ptcps = ptcps)
 
   # Record result attributes
@@ -206,27 +225,27 @@ smooth_results <- function(res, time=t, w) {
   V_smooth_list <- list()
 
   # at time T, use final time-period results
-  m_smooth_list[[max_t]] <- as.numeric(res$m[[max_t]])
-  V_smooth_list[[max_t]] <- res$V[[max_t]]
+  m_smooth_list[[max_t]] <- as.numeric(res$m_posts[[max_t]])
+  V_smooth_list[[max_t]] <- res$V_posts[[max_t]]
 
   for (tp in (max_t-1):1) {
     res_t <- res %>% dplyr::filter({{time}} == tp)
 
     # only add w if player has started playing by given tp
-    w_vec <- rep(w, length(res$m[[1]]))
-    w_vec[res_t$m[[1]] == 0] <- 1
+    w_vec <- rep(w, length(res$m_posts[[1]]))
+    w_vec[res_t$m_posts[[1]] == 0] <- 1
     w_mat <- diag(w_vec)
-    Vplusw <- res_t$V[[1]] + w_mat
+    Vplusw <- res_t$V_posts[[1]] + w_mat
 
-    G_t <- res_t$V[[1]] %*% solve(Vplusw)
-    m_smooth_list[[tp]] <- as.numeric(res_t$m[[1]] + G_t %*% (m_smooth_list[[tp+1]] - res_t$m[[1]]))
-    V_smooth_list[[tp]] <- res_t$V[[1]] + G_t %*% (V_smooth_list[[tp+1]] - Vplusw ) %*% t(G_t)
+    G_t <- res_t$V_posts[[1]] %*% solve(Vplusw)
+    m_smooth_list[[tp]] <- as.numeric(res_t$m_posts[[1]] + G_t %*% (m_smooth_list[[tp+1]] - res_t$m_posts[[1]]))
+    V_smooth_list[[tp]] <- res_t$V_posts[[1]] + G_t %*% (V_smooth_list[[tp+1]] - Vplusw ) %*% t(G_t)
   }
 
-  res$m <- m_smooth_list
-  res$V <- V_smooth_list
-  res$a <- res$a[[max_t]]
-  res$b <- res$b[[max_t]]
+  res$m_posts <- m_smooth_list
+  res$V_posts <- V_smooth_list
+  res$a_posts <- res$a_posts[[max_t]]
+  res$b_posts <- res$b_posts[[max_t]]
 
   return(res)
 }
@@ -234,12 +253,7 @@ smooth_results <- function(res, time=t, w) {
 
 # get predictions from model
 
-#' Get DLM predictive distributions for each event
-#'
-#' @param df data
-#' @param res fitted model
-#'
-#' @return df with model predictions for each time point
+# Get DLM predictive distributions for each event
 get_predictions <- function(df,
                             res,
                             outcome = y,
@@ -254,8 +268,8 @@ get_predictions <- function(df,
   v0 <- attr(res, "model_params")[2]
   p <- attr(df, "p")
 
-  # TODO: these are actually 'ath' values in the original code...
-  #  - here we're using the "athleteID"s, which might lead to problems?
+  # NOTE: these are actually 'ath' values in the original code...
+  #  - but using 'athleteID' values here shouldn't cause any issues!
   if (model_class == "multi") {
     # gather observed outcomes in appropriate format (one row per time period)
     true_values <- df %>%
@@ -265,7 +279,7 @@ get_predictions <- function(df,
         {{unit}} := list({{unit}}),
         {{outcome}} := list({{outcome}}),
         .groups="drop") %>%
-      dplyr::mutate(X = res$X,
+      dplyr::mutate(X_mats = res$X_mats,
                     ptcps = res$ptcps)
   } else if (model_class == "h2h") {
     unit_str <- rlang::as_string(rlang::ensym(unit))
@@ -277,7 +291,7 @@ get_predictions <- function(df,
         "{{unit}}2" := list(.data[[paste0(unit_str, 2)]]),
         {{outcome}} := list({{outcome}}),
         .groups="drop") %>%
-      dplyr::mutate(X = res$X %>%
+      dplyr::mutate(X_mats = res$X_mats %>%
                       purrr::discard(is.null),    # account for empty time periods
                     ptcps = res$ptcps %>%
                       purrr::discard(is.null))
@@ -286,23 +300,23 @@ get_predictions <- function(df,
   # make "predictive" values for time 1
   output1 <- dplyr::tibble(
     {{time}} := 1,
-    a = attr(res, "model_params")[3],
-    b = attr(res, "model_params")[4],
-    m = list(rep(0, p)),
-    V = list(v0 * Matrix::Diagonal(p)),
+    a_posts = attr(res, "model_params")[3],
+    b_posts = attr(res, "model_params")[4],
+    m_posts = list(rep(0, p)),
+    V_posts = list(v0 * Matrix::Diagonal(p)),
   )
 
   # link each time t+1 with predicted values from time t
   model_outputs <- res %>%
-    dplyr::select(-X, -ptcps) %>%
+    dplyr::select(-X_mats, -ptcps) %>%
     dplyr::mutate({{time}} := {{time}}+1) %>%
     dplyr::bind_rows(output1)
 
   # if only one athlete, make sure that X is a matrix
-  if (is.null(nrow(true_values$X[[1]]))) {
+  if (is.null(nrow(true_values$X_mats[[1]]))) {
     true_values <- true_values %>%
       dplyr::rowwise() %>%
-      dplyr::mutate(X = list(as.matrix(X)))
+      dplyr::mutate(X_mats = list(as.matrix(X_mats)))
   }
 
   # compute mean and variance estimates for each time period: SUPER slow
@@ -311,16 +325,26 @@ get_predictions <- function(df,
                      by=rlang::as_string(rlang::ensym(time))) %>%
     dplyr::rowwise() %>%
     dplyr::mutate(
-      pt_est = list(as.vector(X %*% m[ptcps])),
-      sigma = list(as.matrix(b/a * (Matrix::Diagonal(nrow(X)) + X %*%
-                                      (V[ptcps,ptcps] + w*Matrix::Diagonal(sum(ptcps))) %*%
-                                      Matrix::t(X)) )),
-      var_theta = list(as.matrix(b/a * X %*% V[ptcps, ptcps] %*% Matrix::t(X)))) %>%
+      pt_est = list(as.vector(X_mats %*% m_posts[ptcps])),
+      sigma = list(as.matrix(b_posts/a_posts * (Matrix::Diagonal(nrow(X_mats)) +
+                                                  X_mats %*%
+                                                  (V_posts[ptcps,ptcps] + w*Matrix::Diagonal(sum(ptcps))) %*%
+                                                  Matrix::t(X_mats)))),
+      var_theta = list(as.matrix(b_posts/a_posts * X_mats %*%
+                                   V_posts[ptcps, ptcps] %*%
+                                   Matrix::t(X_mats)))) %>%
     # computes ONLY diagonal elements of sigma
     #  - faster, but we need full sigma matrix for accurate log-likelihood evaluations
     # sigma = list(as.matrix(b/a * (Diagonal(nrow(X)) +
     #              rowSums( (X %*% (V[ptcps,ptcps] + w*Diagonal(sum(ptcps)))) * X )) ))) %>%
-    dplyr::ungroup()
+    dplyr::ungroup() %>%
+    dplyr::rowwise() %>%
+    dplyr::mutate(
+      sd = list(sqrt(diag(sigma))),
+      sd_theta = list(sqrt(diag(var_theta)))) %>%
+    dplyr::select(-c(X_mats, ptcps, a_posts, b_posts,
+                     m_posts, V_posts, sigma, var_theta)) %>%
+    tidyr::unnest(dplyr::everything())
 }
 
 
@@ -344,7 +368,8 @@ optimize_dlmt <- function(
 
     model_class,
     training_periods = NULL,
-    method = c("optim", "mcmc")) {
+    method = c("optim", "mcmc"),
+    verbose = NULL) {
   method <- match.arg(method)
   p <- attr(df, "p")
 
@@ -353,6 +378,10 @@ optimize_dlmt <- function(
     tmax <- max(dplyr::pull(df, {{time}}))
     training_periods <- tmax - round(tmax / 3)
     stopifnot(training_periods < tmax)
+  }
+  # get verbosity of output
+  if (is.null(verbose)) {
+    verbose <- F
   }
 
   # set training dataset & training spline bases
@@ -417,11 +446,9 @@ optimize_dlmt <- function(
       # hessian = T,
       # draws = 1000,
       # importance_resampling=T,   # get approximate posterior draws?
-      # init = list(lam_scale = sum(init_t_params[-1])),   # initialize lam_scale at the right spot so things don't break
-      verbose = F
+      verbose = verbose
     )
   } else {
-    browser()
     stop("Haven't implemented MCMC sampling version yet")
     res <- rstan::sampling(
       stanmodels$model_unc,
@@ -442,12 +469,7 @@ optimize_dlmt <- function(
 
 # construct useful objects for rstan optimization of transformation -------
 
-#' Given event-size key for one time period, build H_t matrix
-#'
-#' @param esk event-size key
-#' @param n_t number of players in games within time period
-#'
-#' @return H_t matrix
+# Given event-size key for one time period, build H_t matrix
 build_Ht <- function(esk, n_t) {
   matrix_list <- esk %>%
     dplyr::pull(event_size) %>%
@@ -456,7 +478,8 @@ build_Ht <- function(esk, n_t) {
   Matrix::Diagonal(n_t) - Matrix::bdiag(matrix_list)
 }
 
-
+# for all time periods, build X matrices and bind together
+#  - useful to pass into rstan
 build_X <- function(df, time=t, event=g, unit=a,
                     tmax, p,
                     model_class = c("multi", "h2h")) {
@@ -489,12 +512,7 @@ build_X <- function(df, time=t, event=g, unit=a,
     do.call(rbind, .)
 }
 
-#' Given data for one time period, build X_t matrix
-#'
-#' @param df data for single time period
-#' @param p total number of athletes
-#'
-#' @return X_t matrix
+# for one time period, build X matrix
 build_Xt <- function(
     df,
     event=g,
@@ -505,7 +523,7 @@ build_Xt <- function(
 
   if (model_class == "multi") {
     X_key <- df %>%
-      dplyr::select({{event}}, paste0(unit, "_id")) %>%
+      dplyr::select({{event}}, dplyr::all_of(paste0(unit, "_id"))) %>%
       dplyr::arrange({{event}}) %>%
       dplyr::mutate(rowID = dplyr::row_number())
     Matrix::sparseMatrix(
@@ -543,13 +561,14 @@ build_participants <- function(df, time=t, unit=a,
     purrr::map(function(x) {
       df %>%
         dplyr::filter({{time}} == x) %>%
-        dplyr::select(all_of(cols)) %>%
+        dplyr::select(dplyr::all_of(cols)) %>%
         unlist(use.names=F) %>%
         unique()
     }) %>%
     unlist()
 }
 
+# get number of observations per time period
 build_nT <- function(df, time=t) {
   df %>%
     dplyr::group_by({{time}}) %>%
@@ -557,6 +576,7 @@ build_nT <- function(df, time=t) {
     dplyr::pull(n)
 }
 
+# get number of unique athletes per time period
 build_nT_unique <- function(df, time=t, unit=a,
                             tmax,
                             model_class = c("multi", "h2h")) {
@@ -576,7 +596,7 @@ build_nT_unique <- function(df, time=t, unit=a,
     purrr::map_dbl(function(x) {
       df %>%
         dplyr::filter({{time}} == x) %>%
-        dplyr::select(all_of(cols)) %>%
+        dplyr::select(dplyr::all_of(cols)) %>%
         unlist(use.names=F) %>%
         unique() %>%
         length()

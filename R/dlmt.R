@@ -1,11 +1,22 @@
 
-# main function for package; runs DLM with transformations
-
-# idea: dlmt() should just run the model,
-#  with the option to optimize the transformation!
-
-# this will spit out optimized parameters (for basis built on full dataset)
-#  - so we should allow users to input parameters, based on past runs
+#' Run dynamic linear model with transformations (Che and Glickman, 2023+)
+#'
+#' @param df dataframe
+#' @param outcome (unquoted) name of outcome column
+#' @param time (unquoted) name of time column
+#' @param event (unquoted) name of event ID column
+#' @param unit (unquoted) name of unit ID column
+#' @param centering centering to apply to outcomes from each event: "median", "mean", or "none"
+#' @param optimize find an optimal outcome transformation and innovation variance parameter?
+#' @param optimize_method method for estimating optimal parameters: "optim" for MAP estimation, "mcmc" for full MCMC estimation
+#' @param lam (optional) vector of transformation parameters lambda; default to identity transformation. Note that the given lambda parameters will be used on the I-spline basis associated with the training data in the given df
+#' @param model_params vector of model parameters (w, V0, a0, b0): (innovation variance, initial variance, shape and scale parameters for inverse-gamma prior on observation variance)
+#' @param smooth smooth posterior latent ability estimates?
+#' @param details include visualization of transformation, model predictions, and model estimates in output?
+#' @param ... optional parameters, e.g., number of knots, number of training periods
+#'
+#' @return df with posterior model estimates at each time period, optionally with helpful attributes
+#' @export
 dlmt <- function(
     df,
     outcome = y,
@@ -17,11 +28,7 @@ dlmt <- function(
     optimize = T,
     optimize_method = c("optim", "mcmc"),
     lam = NULL,
-
-    w = 0.5,
-    v0 = 10,
-    a0 = 2,
-    b0 = sd(dplyr::pull(df, {{outcome}})),
+    model_params = NULL,
 
     smooth = F,
     details = F,
@@ -30,6 +37,11 @@ dlmt <- function(
   args <- list(...)
   centering <- match.arg(centering)
   optimize_method <- match.arg(optimize_method)
+
+  check_names({{outcome}})
+  check_names({{time}})
+  check_names({{event}})
+  check_names({{unit}})
 
   # automatically determine if model should be h2h or multiplayer
   max_players <- df %>%
@@ -45,6 +57,10 @@ dlmt <- function(
                  time = {{time}},
                  event = {{event}},
                  unit = {{unit}})
+    if (centering != "none") {
+      warning("For head-to-head data, centering should be \"none\": manually fixing")
+      centering <- "none"
+    }
   } else {
     cat("Using multiplayer model...")
     model_class <- "multi"
@@ -77,9 +93,20 @@ dlmt <- function(
       degree = 3)
   }
 
+  # set default model parameters, if not specified
+  if (is.null(model_params)) {
+    model_params <- c(0.5, 10, 2, sd(dplyr::pull(df, {{outcome}})))
+    using_default_mp <- T
+  } else {
+    using_default_mp <- F
+  }
+
   # if optimizing, get optimized transformation and w
   if (optimize) {
     stopifnot(!is.null(optimize_method))
+    if (!is.null(lam) | !using_default_mp) {
+      warning("Using optimized lambda and w values instead of user-inputted lambda and w values")
+    }
     opt <- optimize_dlmt(
       df = dfp,
       outcome = {{outcome}},
@@ -93,10 +120,11 @@ dlmt <- function(
 
       training_periods = args$training_periods,
       model_class = model_class,
-      method = optimize_method
+      method = optimize_method,
+      verbose = args$verbose
     )
-    lam <- c(opt$lam0, opt$theta_tilde[-1])
-    w   <- opt$theta_tilde[1]
+    lam <- c(opt$lam0, opt$theta_tilde[-1])   # theta_tilde without w
+    model_params[1] <- opt$theta_tilde[1]
   }
 
   # transform dataset
@@ -114,18 +142,27 @@ dlmt <- function(
     time = {{time}},
     event = {{event}},
     unit = {{unit}},
-    model_params = c(w, v0, a0, b0),
+    model_params = model_params,
     model_class = model_class)
+  if (optimize | !is.null(lam)) {
+    attr(res, "lambda") <- lam
+  }
 
   if (smooth) {
-    res <- smooth_results(res, time={{time}}, w)
+    res <- smooth_results(res, time={{time}}, w=model_params[1])
   }
 
   if (details) {
     # visualize transformation
+    if (optimize | !is.null(lam)) {
+      yfit <- as.vector(lam[1] + i_basis %*% lam[-1])
+    } else {
+      # visualize identity transformation
+      yfit <- dplyr::pull(dfp, {{outcome}})
+    }
     transformation_plot <- dplyr::tibble(
       x    = dplyr::pull(dfp, {{outcome}}),
-      yfit = as.vector(lam[1] + i_basis %*% lam[-1])
+      yfit = yfit
     ) %>%
       ggplot2::ggplot(ggplot2::aes(x=x, y=yfit)) +
       ggplot2::geom_line(linewidth=1) +
@@ -141,31 +178,25 @@ dlmt <- function(
                              time = {{time}},
                              event = {{event}},
                              unit = {{unit}},
-                             model_class = model_class) %>%
-      dplyr::rowwise() %>%
-      dplyr::mutate(
-        sd = list(sqrt(diag(sigma))),
-        sd_theta = list(sqrt(diag(var_theta)))) %>%
-      dplyr::select(-c(X, ptcps, a, b, m, V, sigma, var_theta)) %>%
-      tidyr::unnest(dplyr::everything())
+                             model_class = model_class)
 
     # store posterior parameter estimates
     maxt <- max(dplyr::pull(df, {{time}}))
     m_df <- attr(dft, "unit_key") %>%
-      cbind(purrr::reduce(res$m, cbind)) %>%
+      cbind(purrr::reduce(res$m_posts, cbind)) %>%
       dplyr::as_tibble(.name_repair = "minimal")
     names(m_df) <- c("unit", "unit_id", paste0("t", 1:maxt))
 
     V_df <- attr(dft, "unit_key") %>%
-      cbind(purrr::map(res$V, diag) %>%
+      cbind(purrr::map(res$V_posts, diag) %>%
               purrr::reduce(cbind)) %>%
       dplyr::as_tibble(.name_repair = "minimal")
     names(V_df) <- c("unit", "unit_id", paste0("t", 1:maxt))
 
     sig_df <- tail(res, n=1) %>%
-      dplyr::select(a, b) %>%
-      dplyr::mutate(mean = b/(a-1),
-                    mode = b/(a+1))
+      dplyr::select(a_posts, b_posts) %>%
+      dplyr::mutate(mean = b_posts/(a_posts-1),
+                    mode = b_posts/(a_posts+1))
 
     attr(res, "transformation_plot") <- transformation_plot
     attr(res, "predictions") <- preds
@@ -175,86 +206,6 @@ dlmt <- function(
   }
 
   res
-}
-
-if (F) {
-  df <- sim_data(ath_per_game = 5, num_games = 10, tmax = 6)
-  res <- dlmt(
-    df,
-
-    outcome = y,
-    time = t,
-    event = g,
-    unit = a,
-
-    centering = c("median"),
-
-    model_params = NULL,
-    optimize = T,
-    optimize_method = c("optim"),
-
-    smooth = T,
-    details = T)
-
-  res
-  names(attributes(res))
-  attr(res, "transformation_plot")
-  attr(res, "sig_values")
-  attr(res, "predictions")
-}
-
-if (F) {
-  df <- sim_data(ath_per_game = 5, num_games = 10, tmax = 6) %>%
-    dplyr::rename(ti = t, ga = g, at = a, ou = y)
-  res <- dlmt(
-    df,
-
-    outcome = ou,
-    time = ti,
-    event = ga,
-    unit = at,
-
-    centering = c("median"),
-
-    model_params = NULL,
-    optimize = T,
-    optimize_method = c("optim"),
-
-    smooth = T,
-    details = T)
-
-  res
-  names(attributes(res))
-  attr(res, "transformation_plot")
-  attr(res, "sig_values")
-  attr(res, "predictions")
-}
-
-if (F) {
-  df <- sim_data(ath_per_game = 2) %>%
-    dplyr::rename(ti = t, ga = g, at = a, ou = y)
-  res <- dlmt(
-    df,
-
-    outcome = ou,
-    time = ti,
-    event = ga,
-    unit = at,
-
-    centering = "none",
-
-    model_params = NULL,
-    optimize = T,
-    optimize_method = c("optim"),
-
-    smooth = T,
-    details = T)
-
-  res
-  names(attributes(res))
-  attr(res, "transformation_plot")
-  attr(res, "sig_values")
-  attr(res, "predictions")
 }
 
 
