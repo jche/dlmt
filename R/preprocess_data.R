@@ -3,8 +3,12 @@
 #' Generate useful keys and optionally center data
 #'
 #' @param df raw data: columns unitID, eventID, t, y
-#' @param event_center name of event-centering method
-#' @param model name of DLM model
+#' @param outcome outcome variable
+#' @param time time variable
+#' @param event event variable
+#' @param unit unit variable
+#' @param event_center name of event-centering method: "none", "median", or "mean"
+#' @param model_class class of model, either "multi" for multiplayer model or "h2h" for head-to-head model
 #'
 #' @return preprocessed df with helpful attributes
 #'
@@ -40,7 +44,8 @@ preprocess_data <- function(df,
   if (model_class == "multi") {
     df <- df %>%
       dplyr::left_join(unit_key, by=unit_str) %>%
-      dplyr::relocate(paste0(unit_str, "_id"), .after=unit_str)
+      dplyr::relocate(paste0(unit_str, "_id"),
+                      .after=dplyr::all_of(unit_str))
   } else if (model_class == "h2h") {
     names(unit_key) <- c(unit1, paste0(unit1, "_id"))
     df <- df %>%
