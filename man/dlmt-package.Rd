@@ -3,7 +3,6 @@
 \docType{package}
 \name{dlmt-package}
 \alias{dlmt-package}
-\alias{dlmt}
 \title{The 'dlmt' package.}
 \description{
 A DESCRIPTION OF THE PACKAGE

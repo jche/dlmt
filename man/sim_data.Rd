@@ -11,10 +11,10 @@ sim_data(
   inv_trans_fun = function(x) {
      x
  },
-  num_athletes = 50,
-  ath_per_game = 10,
-  num_games = 25,
-  tmax = 10,
+  num_athletes = 10,
+  ath_per_game = 5,
+  num_games = 10,
+  tmax = 6,
   HX = T
 )
 }

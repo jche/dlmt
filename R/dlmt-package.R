@@ -4,7 +4,7 @@
 #'
 #' @docType package
 #' @name dlmt-package
-#' @aliases dlmt
+#' @aliases dlmt-package
 #' @useDynLib dlmt, .registration = TRUE
 #' @import methods
 #' @import Rcpp
