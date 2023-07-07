@@ -34,6 +34,8 @@ sim_data(
 \item{num_games}{number of games per time period}
 
 \item{tmax}{number of time periods}
+
+\item{HX}{generate scores around centered thetas?}
 }
 \value{
 a synthetic dataset

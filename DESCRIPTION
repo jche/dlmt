@@ -1,12 +1,11 @@
 Package: dlmt
-Title: What the Package Does (One Line, Title Case)
+Title: Dynamic linear model with transformations
 Version: 0.0.0.9000
 Authors@R: 
-    person("First", "Last", , "first.last@example.com", role = c("aut", "cre"),
-           comment = c(ORCID = "YOUR-ORCID-ID"))
-Description: What the package does (one paragraph).
-License: `use_mit_license()`, `use_gpl3_license()` or friends to pick a
-    license
+    person("Jonathan", "Che", , "jche@g.harvard.edu", role = c("aut", "cre"),
+           comment = c(ORCID = "0000-0002-1478-7639"))
+Description: Bare-bones package for fitting dynamic linear model with optimized outcome transformations (Che and Glickman 2023+).
+License: MIT + file LICENSE
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
 RoxygenNote: 7.2.3
@@ -14,15 +13,21 @@ Biarch: true
 Depends: 
     R (>= 3.4.0)
 Imports: 
+    dplyr,
+    ggplot2,
     glmnet,
     magrittr,
     Matrix,
     methods,
+    plyr,
+    purrr,
     Rcpp (>= 0.12.0),
     RcppParallel (>= 5.0.1),
+    rlang,
     rstan (>= 2.18.1),
     rstantools (>= 2.1.1),
-    splines2
+    splines2,
+    tidyr
 LinkingTo: 
     BH (>= 1.66.0),
     Rcpp (>= 0.12.0),
