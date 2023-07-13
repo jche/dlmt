@@ -1,7 +1,7 @@
 
 #' Run dynamic linear model with transformations (Che and Glickman, 2023+)
 #'
-#' @param df dataframe
+#' @param df dataframe with one row per game score
 #' @param outcome (unquoted) name of outcome column
 #' @param time (unquoted) name of time column
 #' @param event (unquoted) name of event ID column
@@ -15,7 +15,7 @@
 #' @param details include visualization of transformation, model predictions, and model estimates in output?
 #' @param ... optional parameters, e.g., number of knots, number of training periods
 #'
-#' @return df with posterior model estimates at each time period:
+#' @return Tibble with posterior model estimates at each time period:
 #' * `time`: (user-defined name) time period of posterior estimates
 #' * `a_posts`: shape parameter of posterior inverse-gamma distribution of observation variance
 #' * `b_posts`: scale parameter of posterior inverse-gamma distribution of observation variance

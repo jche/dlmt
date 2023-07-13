@@ -21,7 +21,7 @@ dlmt(
 )
 }
 \arguments{
-\item{df}{dataframe}
+\item{df}{dataframe with one row per game score}
 
 \item{outcome}{(unquoted) name of outcome column}
 
@@ -48,7 +48,7 @@ dlmt(
 \item{...}{optional parameters, e.g., number of knots, number of training periods}
 }
 \value{
-df with posterior model estimates at each time period:
+Tibble with posterior model estimates at each time period:
 \itemize{
 \item \code{time}: (user-defined name) time period of posterior estimates
 \item \code{a_posts}: shape parameter of posterior inverse-gamma distribution of observation variance
